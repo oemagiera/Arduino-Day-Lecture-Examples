@@ -1,0 +1,255 @@
+//code for device 3 with the motor attached. When button is clicked state 3 is transmitted.
+
+
+// Add necessary libraries
+#include <esp_now.h>  // To access the ESP-NOW functions
+#include <WiFi.h>     // To add Wi-Fi capabilities on ESP32
+
+int state;
+bool moveMotor;
+
+//Pins where the button is attached
+int b1Pin = 21;
+
+int motorPin1 = 14;
+int motorPin2 = 27;
+int ena = 26;
+
+//Pins for where the lights are attached
+int b1Light = 12;
+int b2Light = 13;
+int b3Light = 32;
+int b4Light = 33;
+
+//Button States
+int b1State = 0;
+
+
+unsigned long previousMillis = 0;
+const long printInterval = 250;
+
+
+//Array with the indices of the lights
+int Lights[4] = {b1Light, b2Light, b3Light, b4Light};
+
+
+//Array holding current state of the lights
+int currentLine[4] = {0,0,0,0};
+
+//sum is how it is being checked if all stations have been "cleared"
+int sum=0;
+
+void reset();
+
+
+// Save the MAC Address in an array named broadcastAddress
+uint8_t DCMotor[] = {0x6e, 0xc8, 0x40, 0x87, 0xc8, 0xd8}; // MAC address of DC Motor  (was taken out and is now contained in this sketch. Can be easily implemented in sperate module if needed)
+uint8_t Computer[] = {0x6c, 0xc8, 0x40, 0x8A, 0xA8, 0x14}; //MAC address of ESP on Computer
+uint8_t buttonModule[] = {0x6c, 0xc8, 0x40, 0x88, 0x48, 0x20}; //MAC address of ESP on Computer
+uint8_t solder1[] = {0x6c, 0xc8, 0x40, 0x87, 0x15, 0x40}; //MAC address of ESP on Computer
+uint8_t solder3[] = {0xEC, 0xE3, 0x34, 0x6B, 0x65, 0xDC}; //MAC address of ESP on Computer
+
+//State to send
+typedef struct stateSending {
+  int device;
+  int State;
+} stateSending;
+
+
+stateSending data;
+
+void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr),
+           "%02X:%02X:%02X:%02X:%02X:%02X",
+           info->des_addr[0], info->des_addr[1], info->des_addr[2],
+           info->des_addr[3], info->des_addr[4], info->des_addr[5]);
+}
+
+
+
+
+void sendData(int state)
+{
+  //takes in where to send to and then the memory address of what is being sent. Tells how big the thing being sent is
+  //so the compiler knows when the data is done. 
+  data.State = state;
+  data.device = 0;
+  esp_err_t result = esp_now_send(DCMotor, (uint8_t *) &data, sizeof(data));
+  esp_err_t result2 = esp_now_send(Computer, (uint8_t *) &data, sizeof(data));
+  esp_err_t result3 = esp_now_send(buttonModule, (uint8_t *) &data, sizeof(data));
+  esp_err_t result4 = esp_now_send(solder1, (uint8_t *) &data, sizeof(data));
+  esp_err_t result5 = esp_now_send(solder3, (uint8_t *) &data, sizeof(data));
+}
+
+
+// Structure must match sender
+typedef struct struct_message {
+  int device;
+  int State;
+} struct_message;
+
+struct_message incomingData;
+
+
+// Callback function when data is received
+void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingDataBytes, int len) {
+    memcpy(&incomingData, incomingDataBytes, sizeof(incomingData));
+    // Send as JSON
+    Serial.print("{\"State\":");
+    Serial.print(incomingData.State);
+    Serial.println("}");
+    //Checking if a button has been pressed.
+      if (incomingData.State==1)
+      {
+        digitalWrite(b1Light, HIGH);
+        delay(2000);
+        yield();
+        digitalWrite(b1Light, LOW);
+      }
+
+      if (incomingData.State== 2)
+        {
+        int lightArray[4]= { b1Light, b2Light, b3Light, b4Light};
+        int j = 0;
+        while (j<3)
+          {
+            for (int i=0; i<4; i++)
+            {
+              digitalWrite(lightArray[i], HIGH);
+              delay(1250);
+              yield();
+              digitalWrite(lightArray[i], LOW);
+            }
+            j=j+1;
+          }
+        }
+
+      if (incomingData.State == 3)
+        {
+        moveMotor = true;
+        }
+
+      if (incomingData.State == 4)
+        {
+        digitalWrite(b4Light, HIGH);
+        delay(5000);
+        yield();
+        digitalWrite(b4Light, LOW);
+        }
+}
+
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(b1Pin, INPUT_PULLUP);
+  pinMode(b1Light, OUTPUT);
+  pinMode(b2Light, OUTPUT);
+  pinMode(b3Light, OUTPUT);
+  pinMode(b4Light, OUTPUT);
+  pinMode(motorPin1, OUTPUT);
+  pinMode(motorPin2, OUTPUT);
+
+
+  // Set device as a Wi-Fi Station
+  WiFi.mode(WIFI_STA);
+
+
+
+
+    // Init ESP-NOW
+    if (esp_now_init() != ESP_OK) {
+      //Serial.println("Error initializing ESP-NOW");
+      return;
+    }
+
+    // Register the send callback
+    esp_now_register_send_cb(OnDataSent);
+
+    // Register peer 1 (DC Motor)
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, DCMotor, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("Failed to add DCMotor peer");
+    return;
+  }
+
+  // Register peer 2 (Computer)
+  esp_now_peer_info_t peerInfo2 = {};
+  memcpy(peerInfo2.peer_addr, Computer, 6);
+  peerInfo2.channel = 0;
+  peerInfo2.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo2) != ESP_OK) {
+    Serial.println("Failed to add Computer peer");
+    return;
+  }
+
+  // Register peer 3 (Solder1)
+  esp_now_peer_info_t peerInfo3 = {};
+  memcpy(peerInfo3.peer_addr, buttonModule, 6);
+  peerInfo3.channel = 0;
+  peerInfo3.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo3) != ESP_OK) {
+    Serial.println("Failed to add Solder1 peer");
+    return;
+  }
+
+  // Register peer 4 (Solder2)
+  esp_now_peer_info_t peerInfo4 = {};
+  memcpy(peerInfo4.peer_addr, solder1, 6);
+  peerInfo4.channel = 0;
+  peerInfo4.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo4) != ESP_OK) {
+    Serial.println("Failed to add Computer peer");
+    return;
+  }
+
+  // Register peer 5 (Solder3)
+  esp_now_peer_info_t peerInfo5 = {};
+  memcpy(peerInfo5.peer_addr, solder3, 6);
+  peerInfo5.channel = 0;
+  peerInfo5.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo5) != ESP_OK) {
+    Serial.println("Failed to add Solder5 peer");
+    return;
+  }
+
+  // Register receive callback
+  esp_now_register_recv_cb(OnDataRecv);
+
+}
+
+void loop() {
+
+  b1State = !(digitalRead(b1Pin));
+  if (b1State == LOW || moveMotor == true)
+  {
+        Serial.println("sending Data");
+        sendData(3);
+        digitalWrite(motorPin1,LOW);
+        digitalWrite(motorPin2, HIGH);
+        digitalWrite(b3Light, HIGH);
+        delay(2500);
+        digitalWrite(motorPin1,HIGH);
+        digitalWrite(motorPin2, LOW);
+        delay(2500);
+        digitalWrite(motorPin1,LOW);
+        digitalWrite(motorPin2, LOW);
+        digitalWrite(b3Light, LOW);
+        moveMotor=false;
+  }
+
+  digitalWrite(motorPin1, LOW);
+  digitalWrite(motorPin2, LOW);
+  delay(300);
+}
+
+
+
